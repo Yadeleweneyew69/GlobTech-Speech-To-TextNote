@@ -1009,7 +1009,6 @@
         let touchStartX = 0;
         let touchEndX = 0;
         let lastConfidence = 0;
-        let lastFinalTranscript = ""; // Track the last final transcript to prevent duplicates
 
         // Check for browser support.
         if (
@@ -1040,10 +1039,8 @@
 
           // Set up recognition event handlers
           recognition.onresult = function (event) {
-            const currentTime = Date.now();
             let interimTranscript = "";
-            let finalTranscriptPart = "";
-            let highestConfidence = 0;
+            let newFinalTranscript = "";
 
             // Process all new results since last result.
             for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -1061,50 +1058,30 @@
                 const transcript = bestAlternative.transcript;
                 const confidence = bestAlternative.confidence || 0;
 
-                // Track highest confidence for this batch
-                if (confidence > highestConfidence) {
-                  highestConfidence = confidence;
-                }
-
                 if (result.isFinal) {
-                  // Only add to final transcript if it's new content and not already included
-                  if (
-                    !finalTranscript.includes(transcript) &&
-                    !lastFinalTranscript.includes(transcript)
-                  ) {
-                    finalTranscript += transcript + " ";
-                    finalTranscriptPart += transcript + " ";
-                    lastFinalTranscript = finalTranscript; // Update last final transcript
-                  }
+                  newFinalTranscript += transcript + " ";
                 } else {
                   interimTranscript += transcript;
+                }
+
+                // Update confidence indicator
+                if (confidence > lastConfidence) {
+                  lastConfidence = confidence;
+                  updateConfidenceIndicator(confidence);
                 }
               }
             }
 
-            // Update confidence indicator
-            if (highestConfidence > 0) {
-              lastConfidence = highestConfidence;
-              updateConfidenceIndicator(highestConfidence);
+            // Only update final transcript if we have new final results
+            if (newFinalTranscript) {
+              finalTranscript += newFinalTranscript;
             }
 
-            // Combine with any pending updates.
-            pendingTranscript = finalTranscript + interimTranscript;
-
-            // Throttle UI updates to prevent jank.
-            if (currentTime - lastUpdateTime > updateInterval) {
-              updateTextDisplay(finalTranscript, interimTranscript);
-              lastUpdateTime = currentTime;
-              pendingTranscript = "";
-            }
+            // Update the display with both final and interim results
+            updateTextDisplay(finalTranscript, interimTranscript);
           };
 
           recognition.onend = function () {
-            if (pendingTranscript) {
-              updateTextDisplay(finalTranscript, "");
-              pendingTranscript = "";
-            }
-
             if (isAutoListening) {
               setTimeout(() => {
                 try {
@@ -1128,10 +1105,6 @@
 
             // Reset confidence indicator
             updateConfidenceIndicator(0);
-
-            // Reset transcripts when starting fresh
-            finalTranscript = "";
-            lastFinalTranscript = "";
           };
 
           recognition.onerror = function (event) {
@@ -1193,11 +1166,6 @@
             }, retryDelay);
           };
         }
-
-        // Debounce variables for efficient UI updates.
-        let lastUpdateTime = 0;
-        const updateInterval = 200; // Update UI max every 200ms for smoother experience
-        let pendingTranscript = "";
 
         // Efficient UI update function.
         function updateTextDisplay(final, interim) {
@@ -1544,8 +1512,6 @@
           } else {
             // Start listening.
             isAutoListening = true;
-            finalTranscript = "";
-            lastFinalTranscript = ""; // Reset when starting fresh
             recognition.lang = languageSelect.value;
             try {
               recognition.start();
@@ -1575,16 +1541,13 @@
             try {
               const noteId = await saveNoteToDB(noteText, currentLanguage);
               addNoteToUI(noteText, noteId, currentLanguage);
+              // Only clear the text display, not the finalTranscript
               textDisplay.textContent = "";
-              finalTranscript = "";
-              lastFinalTranscript = ""; // Reset after adding note
             } catch (error) {
               console.error("Failed to save note:", error);
               // Fallback to localStorage if IndexedDB fails.
               addNoteToUI(noteText, null, currentLanguage);
               textDisplay.textContent = "";
-              finalTranscript = "";
-              lastFinalTranscript = ""; // Reset after adding note
             }
           }
         });
@@ -1594,7 +1557,6 @@
             textDisplay.textContent = "";
             notesList.innerHTML = "";
             finalTranscript = "";
-            lastFinalTranscript = ""; // Reset when clearing
             try {
               await clearAllNotesFromDB();
             } catch (error) {
